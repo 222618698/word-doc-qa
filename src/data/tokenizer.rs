@@ -1,56 +1,94 @@
-use std::collections::HashMap;
+use tokenizers::models::bpe::BPE;
+use tokenizers::normalizers::Sequence as NormSeq;
+use tokenizers::normalizers::strip::Strip;
+use tokenizers::normalizers::unicode::NFC;
+use tokenizers::pre_tokenizers::whitespace::Whitespace;
+use tokenizers::processors::template::TemplateProcessing;
+use tokenizers::{AddedToken, Tokenizer as HfTokenizer};
 
-/// A simple character-level tokenizer.
+/// Wrapper around HuggingFace `tokenizers` crate providing a
+/// BPE tokenizer with special tokens for the Q&A pipeline.
 ///
-/// For production, replace with a BPE or WordPiece tokenizer.
+/// Special tokens:
+///   0 = <PAD>, 1 = <UNK>, 2 = <SOS>, 3 = <EOS>
 pub struct Tokenizer {
-    pub char_to_id: HashMap<char, usize>,
-    pub id_to_char: HashMap<usize, char>,
+    inner: HfTokenizer,
     pub vocab_size: usize,
     pub pad_id: usize,
     pub unk_id: usize,
 }
 
 impl Tokenizer {
-    /// Builds a tokenizer from a corpus of text.
+    // ── Construction ────────────────────────────────────────────────
+
+    /// Train a BPE tokenizer from a slice of text strings.
+    ///
+    /// This replaces the old character-level constructor. The resulting
+    /// tokenizer is ready for encoding immediately.
     pub fn from_corpus(texts: &[String]) -> Self {
-        let mut char_set: Vec<char> = Vec::new();
+        use tokenizers::models::bpe::BpeTrainer;
+        use tokenizers::models::TrainerWrapper;
 
-        // Reserve special tokens
-        // 0 = <PAD>, 1 = <UNK>, 2 = <SOS>, 3 = <EOS>
-        let special_count = 4;
+        let mut tokenizer = HfTokenizer::new(BPE::default());
 
-        for text in texts {
-            for c in text.chars() {
-                if !char_set.contains(&c) {
-                    char_set.push(c);
-                }
-            }
-        }
+        // Normalizers: strip whitespace edges, NFC unicode
+        tokenizer.with_normalizer(NormSeq::new(vec![
+            tokenizers::NormalizerWrapper::from(Strip::new(true, true)),
+            tokenizers::NormalizerWrapper::from(NFC),
+        ]));
 
-        char_set.sort();
+        // Pre-tokenizer: split on whitespace
+        tokenizer.with_pre_tokenizer(Whitespace {});
 
-        let mut char_to_id = HashMap::new();
-        let mut id_to_char = HashMap::new();
+        // Special tokens
+        let special = vec![
+            AddedToken::from("<PAD>", true),
+            AddedToken::from("<UNK>", true),
+            AddedToken::from("<SOS>", true),
+            AddedToken::from("<EOS>", true),
+        ];
+        tokenizer.add_special_tokens(&special);
 
-        for (i, &c) in char_set.iter().enumerate() {
-            let id = i + special_count;
-            char_to_id.insert(c, id);
-            id_to_char.insert(id, c);
-        }
+        // BPE trainer
+        let trainer = BpeTrainer::builder()
+            .vocab_size(500)
+            .min_frequency(2)
+            .special_tokens(special.clone())
+            .show_progress(false)
+            .build();
 
-        let vocab_size = char_set.len() + special_count;
+        // Train on the provided texts
+        let mut wrapper: TrainerWrapper = trainer.into();
+        let _ = tokenizer.train(
+            &mut wrapper,
+            texts.iter().map(|s| s.as_str()),
+        );
+
+        // Post-processor: add SOS/EOS
+        let _ = tokenizer.with_post_processor(
+            TemplateProcessing::builder()
+                .try_single("<SOS> $A <EOS>")
+                .unwrap()
+                .special_tokens(vec![
+                    ("<SOS>", 2),
+                    ("<EOS>", 3),
+                ])
+                .build()
+                .unwrap(),
+        );
+
+        let vocab_size = tokenizer.get_vocab_size(true);
 
         Tokenizer {
-            char_to_id,
-            id_to_char,
+            inner: tokenizer,
             vocab_size,
             pad_id: 0,
             unk_id: 1,
         }
     }
 
-    /// Builds a default tokenizer covering printable ASCII.
+    /// Build a default tokenizer covering printable ASCII,
+    /// suitable for small-scale character-level work.
     pub fn default_ascii() -> Self {
         let chars: Vec<String> = (32u8..=126)
             .map(|b| String::from(b as char))
@@ -58,11 +96,18 @@ impl Tokenizer {
         Self::from_corpus(&chars)
     }
 
+    // ── Encode / Decode ────────────────────────────────────────────
+
     /// Encode a string into token IDs, padded/truncated to `max_len`.
     pub fn encode(&self, text: &str, max_len: usize) -> Vec<usize> {
-        let mut ids: Vec<usize> = text
-            .chars()
-            .map(|c| *self.char_to_id.get(&c).unwrap_or(&self.unk_id))
+        let encoding = self.inner.encode(text, false).unwrap_or_else(|_| {
+            self.inner.encode("", false).unwrap()
+        });
+
+        let mut ids: Vec<usize> = encoding
+            .get_ids()
+            .iter()
+            .map(|&id| id as usize)
             .collect();
 
         ids.truncate(max_len);
@@ -76,48 +121,34 @@ impl Tokenizer {
 
     /// Decode token IDs back into a string.
     pub fn decode(&self, ids: &[usize]) -> String {
-        ids.iter()
-            .filter(|&&id| id != self.pad_id)
-            .map(|&id| {
-                self.id_to_char.get(&id).copied().unwrap_or('?')
-            })
-            .collect()
-    }
-
-    /// Save tokenizer vocabulary to JSON.
-    pub fn save(&self, path: &str) {
-        let map: HashMap<String, usize> = self
-            .char_to_id
+        let u32_ids: Vec<u32> = ids
             .iter()
-            .map(|(c, id)| (c.to_string(), *id))
+            .filter(|&&id| id != self.pad_id)
+            .map(|&id| id as u32)
             .collect();
-        let json = serde_json::to_string_pretty(&map).unwrap();
-        std::fs::write(path, json).expect("Failed to save tokenizer");
+
+        self.inner
+            .decode(&u32_ids, true)
+            .unwrap_or_default()
     }
 
-    /// Load tokenizer vocabulary from JSON.
+    // ── Persistence ────────────────────────────────────────────────
+
+    /// Save the tokenizer to a JSON file.
+    pub fn save(&self, path: &str) {
+        self.inner
+            .save(path, false)
+            .expect("Failed to save tokenizer");
+    }
+
+    /// Load a tokenizer from a JSON file previously saved.
     pub fn load(path: &str) -> Self {
-        let content = std::fs::read_to_string(path).expect("Failed to read tokenizer");
-        let map: HashMap<String, usize> = serde_json::from_str(&content).unwrap();
-
-        let mut char_to_id = HashMap::new();
-        let mut id_to_char = HashMap::new();
-        let mut max_id = 0;
-
-        for (s, id) in &map {
-            if let Some(c) = s.chars().next() {
-                char_to_id.insert(c, *id);
-                id_to_char.insert(*id, c);
-                if *id > max_id {
-                    max_id = *id;
-                }
-            }
-        }
-
+        let inner = HfTokenizer::from_file(path)
+            .expect("Failed to load tokenizer");
+        let vocab_size = inner.get_vocab_size(true);
         Tokenizer {
-            char_to_id,
-            id_to_char,
-            vocab_size: max_id + 1,
+            inner,
+            vocab_size,
             pad_id: 0,
             unk_id: 1,
         }

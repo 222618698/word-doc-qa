@@ -1,8 +1,5 @@
-use std::fs::{self, File};
-use std::io::Read;
+use std::fs;
 use std::path::Path;
-use zip::ZipArchive;
-use xml::reader::{EventReader, XmlEvent};
 
 /// Represents a loaded document with its filename and extracted text.
 #[derive(Debug, Clone)]
@@ -53,44 +50,72 @@ pub fn load_all_docx(dir: &str) -> Vec<Document> {
     documents
 }
 
-/// Extracts plain text from a .docx file by reading word/document.xml inside the ZIP.
+/// Extracts plain text from a .docx file using the docx-rs crate.
+///
+/// Iterates over document children (paragraphs, tables) and collects
+/// all text runs into a single string separated by newlines.
 fn extract_text_from_docx(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
-    let file = File::open(path)?;
-    let mut archive = ZipArchive::new(file)?;
+    let bytes = fs::read(path)?;
+    let docx = docx_rs::read_docx(&bytes)
+        .map_err(|e| format!("docx-rs parse error: {:?}", e))?;
 
-    let mut xml_content = String::new();
-    {
-        let mut doc_xml = archive.by_name("word/document.xml")?;
-        doc_xml.read_to_string(&mut xml_content)?;
-    }
+    let mut lines: Vec<String> = Vec::new();
 
-    let mut text = String::new();
-    let parser = EventReader::from_str(&xml_content);
-    let mut in_text_element = false;
-
-    for event in parser {
-        match event {
-            Ok(XmlEvent::StartElement { name, .. }) => {
-                // <w:t> elements contain the actual text
-                if name.local_name == "t" {
-                    in_text_element = true;
-                }
-                // <w:p> = paragraph boundary → add newline
-                if name.local_name == "p" && !text.is_empty() {
-                    text.push('\n');
+    for child in docx.document.children {
+        match child {
+            docx_rs::DocumentChild::Paragraph(para) => {
+                let line = extract_paragraph_text(&para);
+                if !line.is_empty() {
+                    lines.push(line);
                 }
             }
-            Ok(XmlEvent::Characters(s)) if in_text_element => {
-                text.push_str(&s);
-            }
-            Ok(XmlEvent::EndElement { name, .. }) => {
-                if name.local_name == "t" {
-                    in_text_element = false;
+            docx_rs::DocumentChild::Table(table) => {
+                // Extract text from table cells as well
+                for row in &table.rows {
+                    match row {
+                        docx_rs::TableChild::TableRow(tr) => {
+                            for cell in &tr.cells {
+                                match cell {
+                                    docx_rs::TableRowChild::TableCell(tc) => {
+                                        for tc_child in &tc.children {
+                                            if let docx_rs::TableCellContent::Paragraph(p) = tc_child {
+                                                let line = extract_paragraph_text(p);
+                                                if !line.is_empty() {
+                                                    lines.push(line);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
             _ => {}
         }
     }
 
-    Ok(text.trim().to_string())
+    Ok(lines.join("\n"))
+}
+
+/// Extract text from a single paragraph by iterating its children (runs).
+fn extract_paragraph_text(para: &docx_rs::Paragraph) -> String {
+    let mut text = String::new();
+    for child in &para.children {
+        match child {
+            docx_rs::ParagraphChild::Run(run) => {
+                for run_child in &run.children {
+                    match run_child {
+                        docx_rs::RunChild::Text(t) => {
+                            text.push_str(&t.text);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    text
 }

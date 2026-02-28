@@ -8,6 +8,8 @@ pub struct TrainingConfig {
     pub d_ff: usize,
     pub n_layers: usize,
     pub epochs: usize,
+    /// Fraction of data used for validation (0.0–1.0).
+    pub val_split: f64,
 }
 
 impl Default for TrainingConfig {
@@ -19,8 +21,9 @@ impl Default for TrainingConfig {
             d_model: 64,
             n_heads: 4,
             d_ff: 128,
-            n_layers: 2,
+            n_layers: 6,
             epochs: 50,
+            val_split: 0.1,
         }
     }
 }

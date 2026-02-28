@@ -1,0 +1,11 @@
+﻿cargo :     Checking windows v0.61.3
+At line:1 char:1
++ cargo check *>&1 | Out-File -FilePath errors.txt -Encoding utf8; Get- ...
++ ~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (    Checking windows v0.61.3:Stri 
+   ng) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+    Checking burn-nn v0.20.1
+    Checking base64 v0.22.1
+    Checking xml-rs v0.8.28
