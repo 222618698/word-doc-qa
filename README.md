@@ -139,7 +139,7 @@ After training, ask questions about your documents:
 
 ```bash
 # Ask a question
-cargo run --release -- ask --question "What is the main topic of the document?"
+ cargo run --release -- ask --question "When does the second semester start in 2026?"
 
 # Using the compiled binary
 ./target/release/word-doc-qa ask --question "Your question here"
@@ -159,7 +159,7 @@ cargo run --release -- generate
 cargo run --release -- train --epochs 50
 
 # 4. Ask questions
-cargo run --release -- ask --question "What is this document about?"
+cargo run --release -- ask --question "When is Christmas Day 2026?"
 ```
 
 ## Dependencies Explained
@@ -223,9 +223,7 @@ cargo clippy
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
-## License
 
-[Add your license here]
 
 ## Acknowledgments
 
