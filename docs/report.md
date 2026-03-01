@@ -1,13 +1,13 @@
 # Word-Doc QA — Assignment Report
 
-**Module:** SEG 580S — Applications of Deep Learning  
+**Module:** SOFTWARE ENGINEERING  
 **Project:** Transformer-based Question-Answering System for .docx Calendar Files  
 **Language:** Rust  
 **Framework:** Burn 0.20.1
 
 ---
 
-## 1. Introduction (10 marks)
+## 1. Introduction 
 
 ### 1.1 Problem Statement
 
@@ -34,7 +34,7 @@ This project implements an end-to-end Question-Answering (QA) pipeline entirely 
 
 ---
 
-## 2. Implementation (25 marks)
+## 2. Implementation
 
 ### 2.1 System Architecture
 
@@ -184,7 +184,7 @@ The inference module implements a **hybrid retrieval strategy** with four stages
 
 ---
 
-## 3. Results (20 marks)
+## 3. Results 
 
 ### 3.1 Training Results
 
@@ -298,7 +298,7 @@ A: • 27  START OF TERM 1
 
 ---
 
-## 4. Conclusion (15 marks)
+## 4. Conclusion
 
 ### 4.1 Summary
 
