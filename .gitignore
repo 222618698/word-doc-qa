@@ -1,0 +1,10 @@
+# Build artifacts
+target/
+**/*.pdb
+
+# Training output logs
+train_*.txt
+
+# OS files
+Thumbs.db
+.DS_Store

@@ -1,0 +1,4 @@
+   Compiling darling_core v0.21.3
+   Compiling derive_more-impl v2.1.1
+   Compiling zerocopy v0.8.39
+    Checking sanitize-filename v0.6.0
