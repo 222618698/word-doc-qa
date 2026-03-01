@@ -231,9 +231,3 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 - Built with the [Burn](https://burn.dev/) deep learning framework
 - Uses the Rust programming language
-## Built With
-
-- [Rust](https://www.rust-lang.org/)
-- [Burn Framework](https://burn.dev/) v0.20.1
-- docx-rs for Word document parsing
-- tokenizers for text tokenization

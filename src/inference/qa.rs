@@ -86,8 +86,9 @@ fn build_abbreviation_map(qa_pairs: &[QAPair]) -> HashMap<String, String> {
             })
             .collect();
 
-        // Only register abbreviations that are 2+ chars and all uppercase
-        if abbrev.len() >= 2 {
+        // Only register abbreviations that are 3+ chars and all uppercase
+        // (skip 2-char ones like "IS", "IT" that clash with common English words)
+        if abbrev.len() >= 3 {
             // If multiple names produce the same abbreviation, keep the shorter one
             let entry = map.entry(abbrev).or_insert_with(|| name.clone());
             if name.len() < entry.len() {
@@ -420,12 +421,21 @@ fn keyword_and_embedding_search(question: &str, qa_pairs: &[QAPair]) -> String {
     let mut answer_parts: Vec<String> = Vec::new();
 
     for &(idx, _) in ranked.iter().take(10) {
-        let ans = qa_pairs[idx].answer.trim().to_string();
-        if ans.is_empty() || is_month_year_header(&ans.to_lowercase()) {
+        let pair = &qa_pairs[idx];
+        let raw_ans = pair.answer.trim().to_string();
+        if raw_ans.is_empty() || is_month_year_header(&raw_ans.to_lowercase()) {
             continue;
         }
-        if seen.insert(ans.clone()) {
-            answer_parts.push(format!("• {}", ans));
+        let event_text = strip_leading_day(&raw_ans);
+        let display = if pair.day > 0 && !pair.month_section.is_empty() {
+            format!("{} — {}", format_date(pair.day, &pair.month_section), event_text)
+        } else if !pair.month_section.is_empty() {
+            format!("{} — {}", pair.month_section, event_text)
+        } else {
+            event_text
+        };
+        if seen.insert(display.clone()) {
+            answer_parts.push(format!("• {}", display));
         }
         if answer_parts.len() >= 5 {
             break;
@@ -453,22 +463,75 @@ fn extract_keywords(text: &str) -> Vec<String> {
     text.split(|c: char| !c.is_alphanumeric())
         .map(|w| w.to_lowercase())
         .filter(|w| w.len() > 1 && !stopwords.contains(&w.as_str()))
+        .flat_map(|w| expand_word_forms(&w))
         .collect()
+}
+
+/// Expand a keyword into additional word forms so that e.g. "woman" also
+/// matches "women", "women's"; "graduate" matches "graduation", etc.
+fn expand_word_forms(word: &str) -> Vec<String> {
+    // Synonym / inflection pairs — order doesn't matter; both directions
+    // are generated.
+    let synonyms: &[(&[&str], &[&str])] = &[
+        (&["woman", "women", "womens", "womans"], &["woman", "women", "womens"]),
+        (&["man", "men", "mens"], &["man", "men", "mens"]),
+        (&["child", "children", "childrens"], &["child", "children"]),
+        (&["graduate", "graduation", "graduating"], &["graduation", "graduate"]),
+        (&["exam", "exams", "examination", "examinations"], &["exam", "examination"]),
+        (&["holiday", "holidays"], &["holiday", "holidays"]),
+        (&["meeting", "meetings", "meet", "meets", "met"], &["meeting", "meet"]),
+        (&["start", "starts", "starting", "begin", "begins"], &["start", "begin"]),
+        (&["end", "ends", "ending", "close", "closes"], &["end", "close"]),
+        (&["committee", "committees"], &["committee"]),
+        (&["day", "days"], &["day"]),
+    ];
+
+    let mut result = vec![word.to_string()];
+    for (triggers, expansions) in synonyms {
+        if triggers.contains(&word) {
+            for &exp in *expansions {
+                let s = exp.to_string();
+                if s != word && !result.contains(&s) {
+                    result.push(s);
+                }
+            }
+        }
+    }
+    result
 }
 
 fn keyword_score(keywords: &[String], question: &str, answer: &str) -> f64 {
     let q_lower = question.to_lowercase();
     let a_lower = answer.to_lowercase();
+    // Strip apostrophes, smart quotes, and encoding artefacts for matching
+    let a_clean = normalize_for_matching(&a_lower);
+    let q_clean = normalize_for_matching(&q_lower);
     let mut score = 0.0;
     for kw in keywords {
-        if q_lower.contains(kw.as_str()) {
+        if q_lower.contains(kw.as_str()) || q_clean.contains(kw.as_str()) {
             score += 2.0;
         }
-        if a_lower.contains(kw.as_str()) {
+        if a_lower.contains(kw.as_str()) || a_clean.contains(kw.as_str()) {
             score += 1.0;
         }
     }
     score
+}
+
+/// Normalise text for fuzzy matching: strip quotes, apostrophes,
+/// smart-quote artefacts (â€™ etc.), and collapse whitespace.
+fn normalize_for_matching(text: &str) -> String {
+    text.replace('\u{2019}', "") // right single quotation mark
+        .replace('\u{2018}', "") // left single quotation mark
+        .replace('\u{201C}', "") // left double quotation mark
+        .replace('\u{201D}', "") // right double quotation mark
+        .replace('\u{2122}', "") // trademark ™
+        .replace('\u{20AC}', "") // euro €
+        .replace('\u{00E2}', "") // â
+        .replace('\'', "")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
